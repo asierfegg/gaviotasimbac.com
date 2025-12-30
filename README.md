@@ -80,9 +80,9 @@
 <footer>
   <p>
     © Gaviota Group |
-    <a href="https://www.gaviotagroup.com" target="_blank">www.gaviotagroup.com</a> |
-    <a href="https://www.gaviotagroup.com/contacto/" target="_blank">Contacto</a> |
-    <a href="https://www.gaviotagroup.com/aviso-legal/" target="_blank">Aviso legal</a>
+    <a href="https://www.gaviotagroup.com" target="_self">www.gaviotagroup.com</a> |
+    <a href="https://www.gaviotagroup.com/contacto/" target="_self">Contacto</a> |
+    <a href="https://www.gaviotagroup.com/aviso-legal/" target="_self">Aviso legal</a>
   </p>
 </footer>
 
