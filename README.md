@@ -59,7 +59,7 @@
 <body>
 
 <header>
-  <img src="https://www.gaviotagroup.com/wp-content/uploads/2023/09/logo](https://www.gaviotagroup.com/wp-content/uploads/2023/09/logo_gaviota.png" alt="Gaviota Group">
+  <img src="https://www.gaviotagroup.com/wp-content/uploads/2023/09/logo_gaviota.png" alt="Gaviota Group">
 </header>
 
 <main>
