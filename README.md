@@ -3,24 +3,88 @@
 <head>
   <meta charset="utf-8">
   <title>Gaviota Simbac · Documentación</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
+
   <style>
-    body { font-family: Arial, sans-serif; margin: 40px; }
-    h1 { color: #003366; }
-    ul { line-height: 1.8; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #ffffff;
+      color: #333;
+    }
+
+    header {
+      padding: 20px;
+      border-bottom: 1px solid #e5e5e5;
+      text-align: center;
+    }
+
+    header img {
+      max-height: 70px;
+    }
+
+    main {
+      padding: 40px;
+      min-height: 60vh;
+    }
+
+    h1 {
+      color: #003366;
+    }
+
+    ul {
+      line-height: 2;
+    }
+
+    footer {
+      background: #003366;
+      color: #ffffff;
+      padding: 30px;
+      text-align: center;
+      font-size: 14px;
+    }
+
+    footer a {
+      color: #ffffff;
+      text-decoration: none;
+      margin: 0 10px;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
   </style>
 </head>
+
 <body>
 
-<h1>Documentación corporativa</h1>
+<header>
+  <img src="https://www.gaviotagroup.com/wp-content/uploads/2023/09/logo" alt="Gaviota Group">
+</header>
 
-<ul>
-  <li><a href="docs/documento1.pdf">Documento 1</a></li>
-  <li><a href="docs/documento2.pdf">Documento 2</a></li>
-  <li><a href="docs/documento3.pdf">Documento 3</a></li>
-</ul>
+<main>
+  <h1>Documentación corporativa</h1>
 
-<p>© Gaviota Simbac</p>
+  <ul>
+    <li><a href="docs/doc1.pdf">Documento 1</a></li>
+    <li><a href="docs/doc2.pdf">Documento 2</a></li>
+    <li><a href="docs/doc3.pdf">Documento 3</a></li>
+    <li><a href="docs/doc4.pdf">Documento 4</a></li>
+    <li><a href="docs/doc5.pdf">Documento 5</a></li>
+    <li><a href="docs/doc6.pdf">Documento 6</a></li>
+    <li><a href="docs/doc7.pdf">Documento 7</a></li>
+  </ul>
+</main>
+
+<footer>
+  <p>
+    © Gaviota Group |
+    <a href="https://www.gaviotagroup.com" target="_blank">www.gaviotagroup.com</a> |
+    <a href="https://www.gaviotagroup.com/contacto/" target="_blank">Contacto</a> |
+    <a href="https://www.gaviotagroup.com/aviso-legal/" target="_blank">Aviso legal</a>
+  </p>
+</footer>
 
 </body>
 </html>
