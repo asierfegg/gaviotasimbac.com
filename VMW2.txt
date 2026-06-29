@@ -1,0 +1,72 @@
+# VMware_Tools_Cleanup.ps1
+# Ejecutar como Administrador en cada servidor, o via PSRemoting en batch
+
+$guid = "{298083DA-1DC8-4886-97DD-333954302E68}"
+
+# --- FASE 1: Comprobar si está registrado ---
+$reg = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+       Where-Object PSChildName -eq $guid
+
+if (-not $reg) {
+    Write-Host "✓ VMware Tools no está registrado. Nada que hacer." -ForegroundColor Green
+    exit 0
+}
+
+Write-Host "→ Encontrado: $($reg.DisplayName) — intentando desinstalación limpia..." -ForegroundColor Yellow
+
+# --- FASE 2: Parar servicios ---
+$servicios = @("VMTools","VGAuthService","VM3DService","vmvss","VMwareCAF","hgfs")
+foreach ($s in $servicios) {
+    Stop-Service $s -Force -ErrorAction SilentlyContinue
+    Set-Service  $s -StartupType Disabled -ErrorAction SilentlyContinue
+}
+
+# --- FASE 3: Intentar MSI normal ---
+$proc = Start-Process "msiexec.exe" -ArgumentList "/x $guid /qn REBOOT=ReallySuppress /l*v C:\vmtools_uninstall.log" -Wait -PassThru
+$exitCode = $proc.ExitCode
+Write-Host "→ msiexec exit code: $exitCode"
+
+if ($exitCode -eq 0) {
+    Write-Host "✓ Desinstalación limpia OK." -ForegroundColor Green
+    exit 0
+}
+
+# --- FASE 4: MSI falló (1603 u otro) — limpieza forzada ---
+Write-Host "→ MSI falló. Ejecutando limpieza forzada..." -ForegroundColor Yellow
+
+# Eliminar servicios
+foreach ($s in $servicios) { sc.exe delete $s 2>$null }
+
+# Eliminar ficheros
+@("C:\Program Files\VMware","C:\Program Files (x86)\VMware","C:\ProgramData\VMware") | 
+    Where-Object { Test-Path $_ } | 
+    ForEach-Object { Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue }
+
+# Calcular GUID inverso automáticamente
+$guidLimpio = $guid -replace '[{}\-]',''
+$guidInverso = -join @(
+    ($guidLimpio[7..0]   -join ''),
+    ($guidLimpio[11..8]  -join ''),
+    ($guidLimpio[15..12] -join ''),
+    ($guidLimpio[17..16] -join ''),
+    ($guidLimpio[19..18] -join ''),
+    ($guidLimpio[20..31] -join '')
+)
+
+# Limpiar registro
+@(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$guid",
+    "HKLM:\SOFTWARE\Classes\Installer\Products\$guidInverso",
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products\$guidInverso"
+) | Where-Object { Test-Path $_ } |
+    ForEach-Object { Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue }
+
+# Verificar resultado
+$check = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+         Where-Object PSChildName -eq $guid
+
+if (-not $check) {
+    Write-Host "✓ Limpieza forzada completada. VMware Tools eliminado del registro." -ForegroundColor Green
+} else {
+    Write-Host "✗ Sigue registrado. Revisar manualmente." -ForegroundColor Red
+}
