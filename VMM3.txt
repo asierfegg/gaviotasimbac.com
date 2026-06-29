@@ -1,0 +1,170 @@
+# =============================================================================
+# VMware_Tools_Cleanup.ps1
+# Gaviota Group — Departamento de Sistemas
+# Desinstalación de VMware Tools tras migración ESXi -> Proxmox
+# Detecta el GUID dinámicamente (compatible con versiones 10.x / 11.x / 12.x / 13.x)
+# Ejecutar como Administrador
+# =============================================================================
+
+# --- Verificar que se ejecuta como Administrador ---
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")) {
+    Write-Host "ERROR: Este script debe ejecutarse como Administrador." -ForegroundColor Red
+    exit 1
+}
+
+$logFile = "C:\vmtools_cleanup.log"
+$timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+function Log {
+    param([string]$msg, [string]$color = "White")
+    $line = "[$timestamp] $msg"
+    Write-Host $line -ForegroundColor $color
+    Add-Content -Path $logFile -Value $line
+}
+
+Log "============================================="
+Log "  VMware Tools Cleanup — Inicio"
+Log "  Equipo: $env:COMPUTERNAME"
+Log "============================================="
+
+# =============================================================================
+# FASE 1 — Detectar instalación
+# =============================================================================
+$reg = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+       Where-Object { $_.DisplayName -like "*VMware Tools*" } |
+       Select-Object -First 1
+
+if (-not $reg) {
+    Log "OK: VMware Tools no está registrado en este equipo. Nada que hacer." "Green"
+    exit 0
+}
+
+$guid    = $reg.PSChildName
+$version = $reg.DisplayVersion
+Log "Encontrado: $($reg.DisplayName) v$version — GUID: $guid" "Yellow"
+
+# =============================================================================
+# FASE 2 — Parar y deshabilitar servicios VMware
+# =============================================================================
+Log "Parando servicios VMware..."
+$servicios = @("VMTools","VGAuthService","VM3DService","vmvss","VMwareCAF","hgfs","vmweapolservice")
+foreach ($s in $servicios) {
+    $svc = Get-Service -Name $s -ErrorAction SilentlyContinue
+    if ($svc) {
+        Stop-Service $s -Force -ErrorAction SilentlyContinue
+        Set-Service  $s -StartupType Disabled -ErrorAction SilentlyContinue
+        Log "  Servicio parado: $s" "Gray"
+    }
+}
+Start-Sleep -Seconds 3
+
+# =============================================================================
+# FASE 3 — Intentar desinstalación limpia via MSI
+# =============================================================================
+Log "Intentando desinstalación MSI con GUID: $guid"
+$msiLog = "C:\vmtools_msi_uninstall.log"
+$proc = Start-Process "msiexec.exe" `
+    -ArgumentList "/x `"$guid`" /qn REBOOT=ReallySuppress /l*v `"$msiLog`"" `
+    -Wait -PassThru -ErrorAction SilentlyContinue
+
+$exitCode = $proc.ExitCode
+Log "msiexec exit code: $exitCode"
+
+# Verificar si se desinstalo correctamente
+$checkAfterMsi = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+                 Where-Object { $_.DisplayName -like "*VMware Tools*" }
+
+if (-not $checkAfterMsi) {
+    Log "OK: Desinstalación MSI completada correctamente." "Green"
+    Log "Siguiente paso: instalar qemu-guest-agent en este equipo."
+    exit 0
+}
+
+# =============================================================================
+# FASE 4 — MSI falló (error 1603 típico en entorno no-VMware) — Limpieza forzada
+# =============================================================================
+Log "MSI falló (código $exitCode). Ejecutando limpieza forzada..." "Yellow"
+
+# 4a. Eliminar servicios del registro
+Log "Eliminando servicios del registro..."
+foreach ($s in $servicios) {
+    $result = sc.exe delete $s 2>&1
+    if ($LASTEXITCODE -eq 0) { Log "  sc delete $s`: OK" "Gray" }
+}
+
+# 4b. Eliminar ficheros y carpetas
+Log "Eliminando ficheros de instalación..."
+$rutas = @(
+    "C:\Program Files\VMware",
+    "C:\Program Files (x86)\VMware",
+    "C:\ProgramData\VMware"
+)
+foreach ($r in $rutas) {
+    if (Test-Path $r) {
+        Remove-Item $r -Recurse -Force -ErrorAction SilentlyContinue
+        Log "  Eliminado: $r" "Gray"
+    }
+}
+
+# 4c. Calcular GUID inverso para limpiar claves MSI del registro
+# El formato invertido es necesario para las claves de Installer en el registro
+$guidLimpio = $guid -replace '[{}\-]', ''
+$guidInverso = -join @(
+    ($guidLimpio[7..0]   -join ''),
+    ($guidLimpio[11..8]  -join ''),
+    ($guidLimpio[15..12] -join ''),
+    ($guidLimpio[17..16] -join ''),
+    ($guidLimpio[19..18] -join ''),
+    ($guidLimpio[20..31] -join '')
+)
+Log "GUID inverso calculado: $guidInverso"
+
+# 4d. Limpiar claves de registro MSI
+Log "Limpiando registro MSI..."
+$clavesRegistro = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$guid",
+    "HKLM:\SOFTWARE\Classes\Installer\Products\$guidInverso",
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products\$guidInverso",
+    "HKLM:\SOFTWARE\WOW6432Node\VMware, Inc.",
+    "HKLM:\SOFTWARE\VMware, Inc.",
+    "HKCU:\SOFTWARE\VMware, Inc."
+)
+foreach ($clave in $clavesRegistro) {
+    if (Test-Path $clave) {
+        Remove-Item $clave -Recurse -Force -ErrorAction SilentlyContinue
+        Log "  Eliminada clave: $clave" "Gray"
+    }
+}
+
+# 4e. Eliminar drivers VMware
+Log "Eliminando drivers VMware..."
+$drivers = @("vmxnet","vmxnet3","vmci","vsock","vmmouse","vmscsi","pvscsi","vmhgfs","vmusbmouse")
+foreach ($d in $drivers) {
+    $inf = Get-ChildItem "C:\Windows\INF" -Filter "$d.inf" -ErrorAction SilentlyContinue
+    if ($inf) {
+        pnputil /delete-driver $inf.Name /uninstall /force 2>$null
+        Log "  Driver eliminado: $d" "Gray"
+    }
+}
+
+# =============================================================================
+# FASE 5 — Verificación final
+# =============================================================================
+$checkFinal = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+              Where-Object { $_.DisplayName -like "*VMware Tools*" }
+
+if (-not $checkFinal) {
+    Log "=============================================" "Green"
+    Log "OK: VMware Tools eliminado correctamente." "Green"
+    Log "SIGUIENTE PASO: Instalar qemu-guest-agent" "Green"
+    Log "  - Montar virtio-win.iso en Proxmox" "Green"
+    Log "  - Ejecutar: D:\guest-agent\qemu-ga-x86_64.msi" "Green"
+    Log "=============================================" "Green"
+    exit 0
+} else {
+    Log "=============================================" "Red"
+    Log "ERROR: VMware Tools sigue registrado. Revisar manualmente." "Red"
+    Log "Log MSI disponible en: $msiLog" "Red"
+    Log "=============================================" "Red"
+    exit 1
+}
