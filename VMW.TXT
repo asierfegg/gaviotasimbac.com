@@ -1,0 +1,124 @@
+# 1. Eliminar servicios del registro
+$servicios = @("VMTools","VGAuthService","VM3DService","vmvss","VMwareCAF","hgfs")
+foreach ($s in $servicios) {
+    sc.exe delete $s 2>$null
+    Write-Host "Eliminado servicio: $s"
+}
+
+# 2. Eliminar carpetas de instalación
+$rutas = @(
+    "C:\Program Files\VMware",
+    "C:\Program Files (x86)\VMware",
+    "C:\ProgramData\VMware"
+)
+foreach ($r in $rutas) {
+    if (Test-Path $r) {
+        Remove-Item $r -Recurse -Force
+        Write-Host "Eliminado: $r"
+    }
+}
+
+
+# 3. Limpiar el registro MSI (esto es lo clave para que Windows no lo vea como instalado)
+$guid = "{298083DA-1DC8-4886-97DD-333954302E68}"
+$guidInverso = "AD380892-8CD1-6884-79DD-333954302E68"  # GUID invertido para Installer
+
+Remove-Item "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$guid" -Force -ErrorAction SilentlyContinue
+Remove-Item "HKLM:\SOFTWARE\Classes\Installer\Products\$guidInverso" -Force -ErrorAction SilentlyContinue
+Remove-Item "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products\$guidInverso" -Recurse -Force -ErrorAction SilentlyContinue
+
+
+# 4. Eliminar drivers VMware del sistema
+$drivers = @("vmxnet","vmxnet3","vmci","vsock","vmmouse","vmscsi","pvscsi")
+foreach ($d in $drivers) {
+    pnputil /delete-driver $d.inf /uninstall /force 2>$null
+}
+
+# 5. Verificar que ya no aparece
+Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" | 
+  Where-Object DisplayName -like "*VMware*"
+# Debe devolver vacío
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Verificar qué está registrado realmente
+Get-WmiObject -Class Win32_Product | Where-Object {$_.Name -like "*VMware*"}
+
+
+Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" | 
+  Where-Object DisplayName -like "*VMware*" | 
+  Select-Object DisplayName, PSChildName
+
+# Desinstalar con ese GUID (sustituir el placeholder)
+msiexec /x "{298083DA-1DC8-4886-97DD-333954302E68}" /qn /l*v C:\vmtools_uninstall.log
+
+
+
+
+# 1. Ver qué versión exacta está registrada (y el GUID)
+Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" | 
+  Where-Object DisplayName -like "*VMware*" | 
+  Select-Object DisplayName, PSChildName, UninstallString
+
+# 2. Estado de los servicios VMware
+Get-Service | Where-Object {$_.DisplayName -like "*VMware*"}
+
+# 3. Si ya tienes el log del msiexec, buscar la línea clave
+Select-String -Path C:\vmtools_uninstall.log -Pattern "Return value 3|Error|failed|1603|1618"
+
+
+
+PS C:\Users\administrator> # 1. Ver qué versión exacta está registrada (y el GUID)
+PS C:\Users\administrator> Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+>>   Where-Object DisplayName -like "*VMware*" |
+>>   Select-Object DisplayName, PSChildName, UninstallString
+
+DisplayName  PSChildName                            UninstallString
+-----------  -----------                            ---------------
+VMware Tools {298083DA-1DC8-4886-97DD-333954302E68} MsiExec.exe /I{298083DA-1DC8-4886-97DD-333954302E68}
+
+PS C:\Users\administrator> # 2. Estado de los servicios VMware
+PS C:\Users\administrator> Get-Service | Where-Object {$_.DisplayName -like "*VMware*"}
+
+Status   Name               DisplayName
+------   ----               -----------
+Stopped  VGAuthService      VMware Alias Manager and Ticket Ser...
+Stopped  VM3DService        Servicio auxiliar de VMware SVGA
+Stopped  VMTools            VMware Tools
+Stopped  vmvss              VMware Snapshot Provider
+
+PS C:\Users\administrator> # 3. Si ya tienes el log del msiexec, buscar la línea clave
+>> Select-String -Path C:\vmtools_uninstall.log -Pattern "Return value 3|Error|failed|1603|1618"
+>>
+
+C:\vmtools_uninstall.log:113:MSI (s) (78:A4) [17:18:54:301]: Transforming table Error.
+C:\vmtools_uninstall.log:937:CustomAction VM_CheckRequirements returned actual error code 1603 (note this may not be
+100% accurate if translation happened inside sandbox)
+C:\vmtools_uninstall.log:938:MSI (s) (78:A4) [17:18:56:129]: Doing action: VM_SendMsiLogToHostOnError
+C:\vmtools_uninstall.log:941:La acción se inició a las 17:18:56: VM_SendMsiLogToHostOnError.
+C:\vmtools_uninstall.log:942:La acción terminó a las 17:18:56: VM_SendMsiLogToHostOnError. Valor devuelto 1.
+C:\vmtools_uninstall.log:977:Property(S): ErrorDialog = ErrorDlg
+C:\vmtools_uninstall.log:1253:MSI (s) (78:A4) [17:18:56:222]: Transforming table Error.
+C:\vmtools_uninstall.log:1255:MSI (s) (78:A4) [17:18:56:222]: Transforming table Error.
+C:\vmtools_uninstall.log:1257:MSI (s) (78:A4) [17:18:56:222]: Producto: VMware Tools -- Error en la eliminación.
+C:\vmtools_uninstall.log:1259:MSI (s) (78:A4) [17:18:56:222]: Windows Installer quitó el producto. Nombre del
+producto: VMware Tools. Versión del producto: 13.0.0.0. Idioma del producto: 1034. Fabricante: Broadcom Inc..
+Resultado de la eliminación: 1603.
+C:\vmtools_uninstall.log:1262:MSI (s) (78:A4) [17:18:56:222]: MainEngineThread is returning 1603
+C:\vmtools_uninstall.log:1274:MSI (c) (A8:48) [17:18:56:222]: MainEngineThread is returning 1603
