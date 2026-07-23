@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inventario por Código de Barras</title>
+<style>
+  :root{
+    --bg:#0f172a; --card:#1e293b; --accent:#22c55e; --accent2:#3b82f6;
+    --text:#e2e8f0; --muted:#94a3b8; --danger:#ef4444; --border:#334155;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--text); padding:12px; padding-bottom:80px;
+  }
+  h1{font-size:1.25rem; margin:0 0 4px;}
+  .sub{color:var(--muted); font-size:0.85rem; margin-bottom:14px;}
+  .card{background:var(--card); border-radius:12px; padding:14px; margin-bottom:14px; border:1px solid var(--border);}
+  video{width:100%; border-radius:10px; background:#000; max-height:280px; object-fit:cover; display:none;}
+  video.active{display:block;}
+  .row{display:flex; gap:8px; flex-wrap:wrap;}
+  button{
+    border:none; border-radius:8px; padding:10px 14px; font-size:0.9rem; font-weight:600;
+    cursor:pointer; color:#fff; flex:1; min-width:110px;
+  }
+  .btn-start{background:var(--accent);}
+  .btn-stop{background:var(--danger);}
+  .btn-secondary{background:var(--accent2);}
+  .btn-outline{background:transparent; border:1px solid var(--border); color:var(--text);}
+  input[type=text], input[type=number]{
+    background:#0b1220; border:1px solid var(--border); color:var(--text);
+    border-radius:8px; padding:9px; font-size:0.9rem; width:100%;
+  }
+  label{font-size:0.75rem; color:var(--muted); display:block; margin-bottom:4px;}
+  .field{flex:1; min-width:100px;}
+  table{width:100%; border-collapse:collapse; font-size:0.82rem; margin-top:10px;}
+  th, td{padding:7px 6px; border-bottom:1px solid var(--border); text-align:left;}
+  th{color:var(--muted); font-weight:600; font-size:0.72rem; text-transform:uppercase;}
+  td input[type=number]{width:60px; padding:5px;}
+  .del{background:none; border:none; color:var(--danger); font-size:1rem; padding:2px 6px; flex:none; min-width:auto;}
+  .status{font-size:0.8rem; color:var(--muted); margin-top:6px; min-height:16px;}
+  .totals{display:flex; justify-content:space-between; font-size:0.85rem; color:var(--muted); margin-top:10px;}
+  .totals b{color:var(--text);}
+  .footer-bar{
+    position:fixed; bottom:0; left:0; right:0; background:var(--card); border-top:1px solid var(--border);
+    padding:10px 12px; display:flex; gap:8px;
+  }
+  .empty{color:var(--muted); font-size:0.85rem; text-align:center; padding:16px 0;}
+  #beep{display:none;}
+</style>
+</head>
+<body>
+
+<h1>📦 Inventario por Código de Barras</h1>
+<div class="sub">Escanea con la cámara o añade manualmente. Los datos se guardan en este móvil hasta que exportes.</div>
+
+<div class="card">
+  <video id="video"></video>
+  <div class="row" style="margin-top:10px;">
+    <button class="btn-start" id="btnStart">▶ Iniciar cámara</button>
+    <button class="btn-stop" id="btnStop" style="display:none;">■ Detener cámara</button>
+  </div>
+  <div class="status" id="camStatus"></div>
+</div>
+
+<div class="card">
+  <div style="font-weight:600; margin-bottom:8px; font-size:0.9rem;">Añadir manualmente</div>
+  <div class="row">
+    <div class="field">
+      <label>Código de barras</label>
+      <input type="text" id="manualCode" inputmode="numeric" placeholder="Ej. 8412345678901">
+    </div>
+    <div class="field" style="max-width:100px;">
+      <label>Cantidad</label>
+      <input type="number" id="manualQty" value="1" min="1">
+    </div>
+  </div>
+  <button class="btn-secondary" id="btnManualAdd" style="margin-top:8px; width:100%;">+ Añadir</button>
+</div>
+
+<div class="card">
+  <div class="row">
+    <b style="font-size:0.9rem;">Líneas escaneadas</b>
+  </div>
+  <div id="tableWrap">
+    <div class="empty">Todavía no hay artículos escaneados.</div>
+  </div>
+  <div class="totals">
+    <span>Líneas: <b id="totalLines">0</b></span>
+    <span>Unidades totales: <b id="totalUnits">0</b></span>
+  </div>
+</div>
+
+<div class="footer-bar">
+  <button class="btn-outline" id="btnClear">🗑 Vaciar</button>
+  <button class="btn-secondary" id="btnCsv">⬇ CSV</button>
+  <button class="btn-start" id="btnXlsx">⬇ Excel</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
+<script>
+(function(){
+  const STORAGE_KEY = 'inventarioScans_v1';
+  let items = [];
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) items = JSON.parse(saved);
+  } catch(e){ items = []; }
+
+  const tableWrap = document.getElementById('tableWrap');
+  const totalLines = document.getElementById('totalLines');
+  const totalUnits = document.getElementById('totalUnits');
+  const camStatus = document.getElementById('camStatus');
+
+  function save(){
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  }
+
+  function render(){
+    if (items.length === 0){
+      tableWrap.innerHTML = '<div class="empty">Todavía no hay artículos escaneados.</div>';
+    } else {
+      let html = '<table><thead><tr><th>Código</th><th>Cant.</th><th>Hora</th><th></th></tr></thead><tbody>';
+      items.forEach((it, idx) => {
+        html += `<tr>
+          <td>${escapeHtml(it.code)}</td>
+          <td><input type="number" min="0" value="${it.qty}" data-idx="${idx}" class="qtyInput"></td>
+          <td>${it.time}</td>
+          <td><button class="del" data-idx="${idx}">✕</button></td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      tableWrap.innerHTML = html;
+
+      tableWrap.querySelectorAll('.qtyInput').forEach(inp => {
+        inp.addEventListener('change', e => {
+          const idx = parseInt(e.target.dataset.idx, 10);
+          const v = Math.max(0, parseInt(e.target.value, 10) || 0);
+          items[idx].qty = v;
+          save();
+          updateTotals();
+        });
+      });
+      tableWrap.querySelectorAll('.del').forEach(btn => {
+        btn.addEventListener('click', e => {
+          const idx = parseInt(e.target.dataset.idx, 10);
+          items.splice(idx, 1);
+          save();
+          render();
+        });
+      });
+    }
+    updateTotals();
+  }
+
+  function updateTotals(){
+    totalLines.textContent = items.length;
+    totalUnits.textContent = items.reduce((s,it) => s + (Number(it.qty)||0), 0);
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function addItem(code, qty){
+    code = (code || '').trim();
+    qty = Math.max(1, parseInt(qty, 10) || 1);
+    if (!code) return;
+    const existing = items.find(it => it.code === code);
+    if (existing){
+      existing.qty += qty;
+      existing.time = new Date().toLocaleTimeString();
+    } else {
+      items.push({ code, qty, time: new Date().toLocaleTimeString() });
+    }
+    save();
+    render();
+    if (navigator.vibrate) navigator.vibrate(80);
+  }
+
+  // Manual add
+  document.getElementById('btnManualAdd').addEventListener('click', () => {
+    const codeEl = document.getElementById('manualCode');
+    const qtyEl = document.getElementById('manualQty');
+    addItem(codeEl.value, qtyEl.value);
+    codeEl.value = '';
+    qtyEl.value = 1;
+    codeEl.focus();
+  });
+  document.getElementById('manualCode').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('btnManualAdd').click();
+  });
+
+  // Clear all
+  document.getElementById('btnClear').addEventListener('click', () => {
+    if (items.length && !confirm('¿Vaciar todas las líneas escaneadas?')) return;
+    items = [];
+    save();
+    render();
+  });
+
+  // Export CSV
+  document.getElementById('btnCsv').addEventListener('click', () => {
+    if (!items.length){ alert('No hay datos para exportar.'); return; }
+    let csv = '﻿Codigo;Cantidad;Hora\n';
+    items.forEach(it => {
+      csv += `${it.code};${it.qty};${it.time}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    downloadBlob(blob, 'inventario.csv');
+  });
+
+  // Export Excel
+  document.getElementById('btnXlsx').addEventListener('click', () => {
+    if (!items.length){ alert('No hay datos para exportar.'); return; }
+    const data = [['Codigo','Cantidad','Hora']].concat(items.map(it => [it.code, it.qty, it.time]));
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+    XLSX.writeFile(wb, 'inventario.xlsx');
+  });
+
+  function downloadBlob(blob, filename){
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // Camera scanning via ZXing
+  let codeReader = null;
+  let scanning = false;
+  const video = document.getElementById('video');
+  const btnStart = document.getElementById('btnStart');
+  const btnStop = document.getElementById('btnStop');
+  let lastCode = null, lastTime = 0;
+
+  btnStart.addEventListener('click', async () => {
+    if (!window.ZXing){
+      camStatus.textContent = 'No se pudo cargar el motor de escaneo (revisa conexión a internet).';
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      camStatus.textContent = 'Este navegador/contexto no permite acceso a la cámara. Necesitas abrir la página por HTTPS (o localhost), no como archivo local.';
+      return;
+    }
+    try {
+      codeReader = new ZXing.BrowserMultiFormatReader();
+      video.classList.add('active');
+      camStatus.textContent = 'Iniciando cámara…';
+
+      let deviceId;
+      try {
+        const devices = await codeReader.listVideoInputDevices();
+        const rearCamera = devices.find(d => /back|rear|environment/i.test(d.label)) || devices[devices.length - 1];
+        deviceId = rearCamera ? rearCamera.deviceId : undefined;
+      } catch(devErr){
+        deviceId = undefined; // deja que ZXing elija la cámara por defecto
+      }
+
+      scanning = true;
+      btnStart.style.display = 'none';
+      btnStop.style.display = 'block';
+      camStatus.textContent = 'Apunta al código de barras…';
+
+      codeReader.decodeFromVideoDevice(deviceId, video, (result, err) => {
+        if (result){
+          const code = result.getText();
+          const now = Date.now();
+          if (code === lastCode && (now - lastTime) < 1500) return; // evita duplicados por lectura continua
+          lastCode = code; lastTime = now;
+          addItem(code, 1);
+          camStatus.textContent = 'Añadido: ' + code;
+        }
+      });
+    } catch (e){
+      camStatus.textContent = 'No se pudo acceder a la cámara: ' + e.message + ' (requiere HTTPS o localhost).';
+      video.classList.remove('active');
+      btnStart.style.display = 'block';
+      btnStop.style.display = 'none';
+    }
+  });
+
+  btnStop.addEventListener('click', () => {
+    if (codeReader) codeReader.reset();
+    scanning = false;
+    video.classList.remove('active');
+    btnStart.style.display = 'block';
+    btnStop.style.display = 'none';
+    camStatus.textContent = 'Cámara detenida.';
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
