@@ -60,6 +60,7 @@
   <div class="row" style="margin-top:10px;">
     <button class="btn-start" id="btnStart">▶ Iniciar cámara</button>
     <button class="btn-stop" id="btnStop" style="display:none;">■ Detener cámara</button>
+    <button class="btn-outline" id="btnSwitch" style="display:none;">🔄 Cambiar cámara</button>
   </div>
   <div class="status" id="camStatus"></div>
 </div>
@@ -233,10 +234,48 @@
   // Camera scanning via ZXing
   let codeReader = null;
   let scanning = false;
+  let videoDevices = [];
+  let currentDeviceIndex = -1; // -1 = modo automático (facingMode environment)
   const video = document.getElementById('video');
   const btnStart = document.getElementById('btnStart');
   const btnStop = document.getElementById('btnStop');
+  const btnSwitch = document.getElementById('btnSwitch');
   let lastCode = null, lastTime = 0;
+
+  function onDecode(result, err){
+    if (result){
+      const code = result.getText();
+      const now = Date.now();
+      if (code === lastCode && (now - lastTime) < 1500) return; // evita duplicados por lectura continua
+      lastCode = code; lastTime = now;
+      addItem(code, 1);
+      camStatus.textContent = 'Añadido: ' + code;
+    }
+  }
+
+  async function startScanning(deviceId){
+    codeReader = new ZXing.BrowserMultiFormatReader();
+    video.classList.add('active');
+    camStatus.textContent = 'Iniciando cámara…';
+
+    if (deviceId){
+      await codeReader.decodeFromVideoDevice(deviceId, video, onDecode);
+    } else {
+      // Deja que el propio navegador elija la cámara trasera principal
+      // (evita elegir a mano la gran angular/macro en móviles con varias lentes traseras)
+      const constraints = { video: { facingMode: { ideal: 'environment' } }, audio: false };
+      await codeReader.decodeFromConstraints(constraints, video, onDecode);
+    }
+
+    // Tras arrancar el stream, listamos dispositivos para poder alternar entre lentes
+    try {
+      videoDevices = await codeReader.listVideoInputDevices();
+      btnSwitch.style.display = videoDevices.length > 1 ? 'block' : 'none';
+    } catch(e){
+      videoDevices = [];
+      btnSwitch.style.display = 'none';
+    }
+  }
 
   btnStart.addEventListener('click', async () => {
     if (!window.ZXing){
@@ -248,39 +287,32 @@
       return;
     }
     try {
-      codeReader = new ZXing.BrowserMultiFormatReader();
-      video.classList.add('active');
-      camStatus.textContent = 'Iniciando cámara…';
-
-      let deviceId;
-      try {
-        const devices = await codeReader.listVideoInputDevices();
-        const rearCamera = devices.find(d => /back|rear|environment/i.test(d.label)) || devices[devices.length - 1];
-        deviceId = rearCamera ? rearCamera.deviceId : undefined;
-      } catch(devErr){
-        deviceId = undefined; // deja que ZXing elija la cámara por defecto
-      }
+      currentDeviceIndex = -1;
+      await startScanning(); // modo automático: cámara trasera principal
 
       scanning = true;
       btnStart.style.display = 'none';
       btnStop.style.display = 'block';
       camStatus.textContent = 'Apunta al código de barras…';
-
-      codeReader.decodeFromVideoDevice(deviceId, video, (result, err) => {
-        if (result){
-          const code = result.getText();
-          const now = Date.now();
-          if (code === lastCode && (now - lastTime) < 1500) return; // evita duplicados por lectura continua
-          lastCode = code; lastTime = now;
-          addItem(code, 1);
-          camStatus.textContent = 'Añadido: ' + code;
-        }
-      });
     } catch (e){
       camStatus.textContent = 'No se pudo acceder a la cámara: ' + e.message + ' (requiere HTTPS o localhost).';
       video.classList.remove('active');
       btnStart.style.display = 'block';
       btnStop.style.display = 'none';
+    }
+  });
+
+  btnSwitch.addEventListener('click', async () => {
+    if (videoDevices.length < 2) return;
+    try {
+      if (codeReader) codeReader.reset();
+      currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
+      const dev = videoDevices[currentDeviceIndex];
+      camStatus.textContent = 'Cambiando a: ' + (dev.label || 'cámara ' + (currentDeviceIndex + 1));
+      await startScanning(dev.deviceId);
+      camStatus.textContent = 'Apunta al código de barras… (' + (dev.label || 'cámara ' + (currentDeviceIndex + 1)) + ')';
+    } catch(e){
+      camStatus.textContent = 'No se pudo cambiar de cámara: ' + e.message;
     }
   });
 
@@ -290,6 +322,7 @@
     video.classList.remove('active');
     btnStart.style.display = 'block';
     btnStop.style.display = 'none';
+    btnSwitch.style.display = 'none';
     camStatus.textContent = 'Cámara detenida.';
   });
 
